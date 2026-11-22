@@ -1,0 +1,14 @@
+name: build-ps2
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ps2dev/ps2dev:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: apk add --no-cache make || true
+      - run: make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: necro-elf
+          path: necro.elf
