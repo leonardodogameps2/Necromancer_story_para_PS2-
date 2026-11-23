@@ -42,15 +42,17 @@ static const SpriteRect *find_sprite(const char *name) {
 /* ---------- esqueleto do heroi (angulos em graus; positivo = sentido horario) ---------- */
 typedef struct { float t, h, af1, af2, ab1, ab2, lf1, lf2, lb1, lb2; } Pose;
 //                 tronco cabeca bracoF antebF bracoT antebT coxaF canelaF coxaT canelaT
-#define POSE_IDLE     { 9, -3,  14, -55, -32, -12, -44, 62, -10, 38 }
-#define POSE_WA       { 20, -8, -20, -95, -14, -92, -58, 70,  24,  8 }
-#define POSE_ATK_W    { 4,  0,  22, -110, -30, -60, -30, 48,  -4, 30 }
-#define POSE_ATK_H    { 24, -8, -105, -8, -30, -60, -46, 60,  -4, 32 }
-#define POSE_KICK_UP  { -2, 0, -20, -70, -35, -70, -80, 80,  -3,  8 }
-#define POSE_KICK_HIT { -8, 2, -20, -70, -35, -70, -88,  4,  -3,  8 }
-#define POSE_GUARD    { 12, -4, -45, -125, -35, -115, -40, 58, -8, 36 }
+#define POSE_IDLE     { 9, 9.5, 24, -61.2, 3.6, -23.9, -65.5, 66, 0, 9.5 }
+#define POSE_WA       { 8, 14.5, 5, -145, 19.8, -50.8, -59, 87, 27, 12 }
+#define POSE_WB { 13.2, 7.5, 19.8, -138.2, 10, -125, 25, 7, -63, 85 }
+#define POSE_ATK_W    { -9, 3, -154, -30, -150, -35, -30, 46, 6, 26 }
+#define POSE_ATK_H    { 39.5, -27, -65.5, 0, -62.5, -37.5, -66, 44, 22, 10 }
+#define POSE_KICK_UP  { -14, -2, -17.5, -27.5, 12.5, 2.5, -80, 78, -4, 8 }
+#define POSE_KICK_HIT { -20, -1, -10, -45, 25, -7.5, -95, 8, -2, 6 }
+#define POSE_GUARD    { 6, -2, -70, -135, -30, -80, -42, 56, -14, 42 }
 static const Pose P_IDLE  = POSE_IDLE;
 static const Pose P_WA    = POSE_WA;
+static const Pose P_WB    = POSE_WB;
 static const Pose P_GUARD = POSE_GUARD;
 static const Pose K_ATK[4]  = { POSE_IDLE, POSE_ATK_W, POSE_ATK_H, POSE_IDLE };
 static const Pose K_KICK[4] = { POSE_IDLE, POSE_KICK_UP, POSE_KICK_HIT, POSE_IDLE };
@@ -107,9 +109,9 @@ static void add_arm(Op *ops, int *n, float sx, float sy, float ang, float a2, in
 static float build_ops(const Pose *p, Op *ops) {
     float nx, ny, sx, sy, hx, hy, low = -1e9f;
     int n = 0;
-    rot(p->t, 30 - 28, 8 - 70, &nx, &ny);     // pescoco
-    rot(p->t, 20 - 28, 20 - 70, &sx, &sy);    // ombro (costas do tronco)
-    rot(p->t, 26 - 28, 68 - 70, &hx, &hy);    // quadril
+    rot(p->t, 38.5f - 28, 16.5f - 70, &nx, &ny);     // pescoco
+    rot(p->t, 10.2f - 28, 7.0f - 70, &sx, &sy);    // ombro (costas do tronco)
+    rot(p->t, 23.4f - 28, 74.8f - 70, &hx, &hy);    // quadril
     add_leg(ops, &n, hx, hy, p->lb1, p->lb2, &low);
     add_arm(ops, &n, sx, sy, p->t + p->ab1, p->ab2, S_HAND2);
     ops[n++] = (Op){ S_TRUNK, 0, 0, p->t };
@@ -196,7 +198,7 @@ int main(void) {
     struct padButtonStatus b;
     u64 white = GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0);
     u64 shadow_c = GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x48, 0);
-    u64 ring_c = GS_SETREG_RGBAQ(0x30, 0xB0, 0x30, 0x80, 0);
+    u64 ring_c = GS_SETREG_RGBAQ(0x10, 0x38, 0x10, 0x80, 0);
 
     while (1) {
         float mx = 0, my = 0;
@@ -243,16 +245,13 @@ int main(void) {
             int dur = (act == 1) ? 22 : 26;
             float u = (float)act_t / (float)dur;
             cur = pose_seq(act == 1 ? K_ATK : K_KICK, 4, u);
-            if (act == 1 && u > 0.3f && u < 0.6f) hx += (face_left ? -1.5f : 1.5f);   // pequeno avanco no golpe
+            if (act == 1 && u > 0.3f && u < 0.6f) hx += (face_left ? -2.2f : 2.2f);   // pequeno avanco no golpe
             if (++act_t >= dur) act = 0;
         } else {
             Pose idle = P_IDLE;
             float br = sinf(ph_idle);
             idle.t += 1.5f * br; idle.h -= 1.0f * br; idle.af2 += 3.0f * br; idle.ab2 += 3.0f * br;
-            Pose wb = P_WA;      // passo B = A com pernas e bracos trocados
-            wb.af1 = P_WA.ab1; wb.af2 = P_WA.ab2; wb.ab1 = P_WA.af1; wb.ab2 = P_WA.af2;
-            wb.lf1 = P_WA.lb1; wb.lf2 = P_WA.lb2; wb.lb1 = P_WA.lf1; wb.lb2 = P_WA.lf2;
-            Pose walk = lerp_pose(&P_WA, &wb, (sinf(ph) + 1.0f) * 0.5f);
+            Pose walk = lerp_pose(&P_WA, &P_WB, (sinf(ph) + 1.0f) * 0.5f);
             cur = lerp_pose(&idle, &walk, blend);
             cur = lerp_pose(&cur, &P_GUARD, guard);
         }
