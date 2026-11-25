@@ -11,6 +11,7 @@
 #include <dmaKit.h>
 #include <libpad.h>
 #include "sprites.h"
+#include "motions.h"   // movimentos reais do game.dat (59 movimentos, 207 quadros)
 
 extern const unsigned char atlas_pixels[];
 extern const unsigned char atlas_clut[];
@@ -70,6 +71,33 @@ static Pose pose_seq(const Pose *keys, int n, float u) {
     float f = u * (n - 1);
     int i = (int)f;
     return lerp_pose(&keys[i], &keys[i + 1], f - (float)i);
+}
+
+/* ---------- animacao real do jogo (game.dat decifrado) ----------
+   quadro do jogo -> Pose. Convencao confirmada por sobreposicao com o video do jogo:
+   cabeca, bracos e antebracos vem relativos ao tronco; as pernas (coxa) vem em f - tronco. */
+static Pose frame_to_pose(const float *f) {
+    Pose p = { f[0], f[1], f[2], f[3], f[5], f[6], f[10] - f[0], f[11], f[8] - f[0], f[9] };
+    return p;
+}
+
+typedef struct { int m, fi; float t; } MPlay;   // movimento, quadro atual, tempo dentro do quadro (s)
+
+static Pose mplay_pose(MPlay *p, float dt) {
+    int n = motion_len[p->m], base = motion_start[p->m];
+    p->t += dt;
+    for (;;) {
+        float dur = motion_data[base + p->fi][14];
+        if (dur < 0.03f) dur = 0.03f;
+        if (p->t < dur) break;
+        p->t -= dur;
+        p->fi = (p->fi + 1) % n;
+    }
+    float dur = motion_data[base + p->fi][14];
+    if (dur < 0.03f) dur = 0.03f;
+    Pose a = frame_to_pose(motion_data[base + p->fi]);
+    Pose b = frame_to_pose(motion_data[base + (p->fi + 1) % n]);
+    return lerp_pose(&a, &b, p->t / dur);
 }
 
 enum { S_TRUNK, S_HEAD, S_ARM, S_HAND, S_HAND2, S_LEG, S_FOOT, S_COUNT };
@@ -193,6 +221,7 @@ int main(void) {
     float hx = 426, hy = 380;          // pes do heroi (coordenadas "design")
     int face_left = 1;
     float ph = 0, ph_idle = 0, blend = 0, guard = 0;
+    MPlay idle_p = { 1, 0, 0 }, walk_p = { 4, 0, 0 };   // 1 = parado respirando, 4 = andar
     int act = 0, act_t = 0;            // acao: 0 nada, 1 ataque (X), 2 chute (Quadrado)
     int prev_x = 0, prev_sq = 0;
     struct padButtonStatus b;
@@ -248,10 +277,8 @@ int main(void) {
             if (act == 1 && u > 0.3f && u < 0.6f) hx += (face_left ? -2.2f : 2.2f);   // pequeno avanco no golpe
             if (++act_t >= dur) act = 0;
         } else {
-            Pose idle = P_IDLE;
-            float br = sinf(ph_idle);
-            idle.t += 1.5f * br; idle.h -= 1.0f * br; idle.af2 += 3.0f * br; idle.ab2 += 3.0f * br;
-            Pose walk = lerp_pose(&P_WA, &P_WB, (sinf(ph) + 1.0f) * 0.5f);
+            Pose idle = mplay_pose(&idle_p, 1.0f / 60.0f);
+            Pose walk = mplay_pose(&walk_p, moving ? 1.0f / 60.0f : 0.0f);
             cur = lerp_pose(&idle, &walk, blend);
             cur = lerp_pose(&cur, &P_GUARD, guard);
         }
