@@ -83,6 +83,12 @@ static Pose frame_to_pose(const float *f) {
     return p;
 }
 
+static float motion_total(int m) {
+    float s = 0;
+    for (int i = 0; i < motion_len[m]; i++) s += motion_data[motion_start[m] + i][14];
+    return s;
+}
+
 typedef struct { int m, fi; float t; } MPlay;   // movimento, quadro atual, tempo dentro do quadro (s)
 
 static Pose mplay_pose(MPlay *p, float dt, float *lift) {
@@ -229,6 +235,10 @@ int main(void) {
     float ph = 0, ph_idle = 0, blend = 0, guard = 0;
     MPlay idle_p = { 1, 0, 0 }, walk_p = { 4, 0, 0 }, run_p = { 6, 0, 0 };   // 1 = parado, 4 = andar, 6 = correr
     float runb = 0;
+    MPlay act_p = { 9, 0, 0 };   // movimento de acao em curso (9/11 = atacar, 10 = chutar)
+    float act_total = 0, act_time = 0;
+    int atk_alt = 0;
+    Pose defp = frame_to_pose(motion_data[motion_start[14] + 1]);   // 14 = guarda (defesa)
     { Op tmp[10]; Pose p0 = frame_to_pose(motion_data[motion_start[1]]); g_fixed_low = build_ops(&p0, tmp); }
     int act = 0, act_t = 0;            // acao: 0 nada, 1 ataque (X), 2 chute (Quadrado)
     int prev_x = 0, prev_sq = 0;
@@ -260,8 +270,8 @@ int main(void) {
         }
         // acoes: X = atacar (A), Quadrado = chutar (K), O = defender (D, segurar)
         if (act == 0 && !btn_o) {
-            if (btn_x && !prev_x) { act = 1; act_t = 0; }
-            else if (btn_sq && !prev_sq) { act = 2; act_t = 0; }
+            if (btn_x && !prev_x) { act = 1; act_t = 0; atk_alt ^= 1; act_p.m = atk_alt ? 9 : 11; act_p.fi = 0; act_p.t = 0; act_total = motion_total(act_p.m); act_time = 0; }
+            else if (btn_sq && !prev_sq) { act = 2; act_t = 0; act_p.m = 10; act_p.fi = 0; act_p.t = 0; act_total = motion_total(10); act_time = 0; }
         }
         prev_x = btn_x; prev_sq = btn_sq;
         int defending = (act == 0 && btn_o);
@@ -280,11 +290,15 @@ int main(void) {
 
         Pose cur;
         if (act) {
-            int dur = (act == 1) ? 22 : 26;
-            float u = (float)act_t / (float)dur;
-            cur = pose_seq(act == 1 ? K_ATK : K_KICK, 4, u);
-            if (act == 1 && u > 0.3f && u < 0.6f) hx += (face_left ? -2.2f : 2.2f);   // pequeno avanco no golpe
-            if (++act_t >= dur) act = 0;
+            float lf;
+            int base = motion_start[act_p.m];
+            float fdur = motion_data[base + act_p.fi][14];
+            if (fdur < 0.03f) fdur = 0.03f;
+            hx += (face_left ? -1.0f : 1.0f) * motion_data[base + act_p.fi][12] * (1.0f / 60.0f) / fdur * 0.5f;   // avanco do golpe
+            cur = mplay_pose(&act_p, 1.0f / 60.0f, &lf);
+            g_lift = lf;
+            act_time += 1.0f / 60.0f;
+            if (act_time >= act_total) act = 0;
         } else {
             float li, lw, lr;
             Pose idle = mplay_pose(&idle_p, 1.0f / 60.0f, &li);
@@ -295,7 +309,7 @@ int main(void) {
             float lmv = lw + (lr - lw) * runb;
             cur = lerp_pose(&idle, &mv, blend);
             g_lift = li + (lmv - li) * blend;
-            cur = lerp_pose(&cur, &P_GUARD, guard);
+            cur = lerp_pose(&cur, &defp, guard);
         }
         if (hx < 45) hx = 45;
         if (hx > 808) hx = 808;
@@ -309,7 +323,7 @@ int main(void) {
             draw_rect_sprite(grass, i * 285.0f, 182, (i + 1) * 285.0f, 480, white);
         draw_rect_sprite(shadow, hx - 50, hy - 25, hx + 50, hy + 25, shadow_c);
         draw_rect_sprite(ring, hx - 50, hy - 20, hx + 50, hy + 20, ring_c);
-        g_use_fixed = (act == 0 && guard < 0.05f);
+        g_use_fixed = (guard < 0.05f);
         draw_hero(hx, hy, &cur, face_left);
         // barra de vida
         gsKit_prim_sprite(gs, (hx - 27) * K, (hy - 195) * K + YOFF, (hx + 27) * K, (hy - 190) * K + YOFF,
