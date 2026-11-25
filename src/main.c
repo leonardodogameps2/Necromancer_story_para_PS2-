@@ -18,6 +18,8 @@ extern const unsigned char atlas_clut[];
 
 static GSGLOBAL *gs;
 static GSTEXTURE tex;
+static float g_fixed_low = -1e9f, g_lift = 0.0f;   // chao fixo e subida do corpo (indice 13 do game.dat)
+static int g_use_fixed = 0;
 static float K = 0.75f, YOFF = 44.0f;   // design -> tela
 #define DEG 0.01745329252f
 
@@ -83,7 +85,7 @@ static Pose frame_to_pose(const float *f) {
 
 typedef struct { int m, fi; float t; } MPlay;   // movimento, quadro atual, tempo dentro do quadro (s)
 
-static Pose mplay_pose(MPlay *p, float dt) {
+static Pose mplay_pose(MPlay *p, float dt, float *lift) {
     int n = motion_len[p->m], base = motion_start[p->m];
     p->t += dt;
     for (;;) {
@@ -97,7 +99,10 @@ static Pose mplay_pose(MPlay *p, float dt) {
     if (dur < 0.03f) dur = 0.03f;
     Pose a = frame_to_pose(motion_data[base + p->fi]);
     Pose b = frame_to_pose(motion_data[base + (p->fi + 1) % n]);
-    return lerp_pose(&a, &b, p->t / dur);
+    float u = p->t / dur;
+    float fa = motion_data[base + p->fi][13], fb = motion_data[base + (p->fi + 1) % n][13];
+    *lift = -(fa + (fb - fa) * u);   // indice 13 negativo = corpo sobe
+    return lerp_pose(&a, &b, u);
 }
 
 enum { S_TRUNK, S_HEAD, S_ARM, S_HAND, S_HAND2, S_LEG, S_FOOT, S_COUNT };
@@ -152,6 +157,7 @@ static float build_ops(const Pose *p, Op *ops) {
 static void draw_hero(float hx, float gy, const Pose *p, int flip) {
     Op ops[10];
     float low = build_ops(p, ops);
+    if (g_use_fixed) low = g_fixed_low + g_lift;
     u64 col = GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0);
     for (int i = 0; i < 10; i++) {
         const SpriteRect *s = spr[ops[i].s];
@@ -221,7 +227,9 @@ int main(void) {
     float hx = 426, hy = 380;          // pes do heroi (coordenadas "design")
     int face_left = 1;
     float ph = 0, ph_idle = 0, blend = 0, guard = 0;
-    MPlay idle_p = { 1, 0, 0 }, walk_p = { 4, 0, 0 };   // 1 = parado respirando, 4 = andar
+    MPlay idle_p = { 1, 0, 0 }, walk_p = { 4, 0, 0 }, run_p = { 6, 0, 0 };   // 1 = parado, 4 = andar, 6 = correr
+    float runb = 0;
+    { Op tmp[10]; Pose p0 = frame_to_pose(motion_data[motion_start[1]]); g_fixed_low = build_ops(&p0, tmp); }
     int act = 0, act_t = 0;            // acao: 0 nada, 1 ataque (X), 2 chute (Quadrado)
     int prev_x = 0, prev_sq = 0;
     struct padButtonStatus b;
@@ -258,9 +266,10 @@ int main(void) {
         prev_x = btn_x; prev_sq = btn_sq;
         int defending = (act == 0 && btn_o);
         int moving = (act == 0 && !defending && (fabsf(mx) > 0.1f || fabsf(my) > 0.1f));
+        int running = (moving && (fabsf(mx) > 0.6f || fabsf(my) > 0.6f));
         if (moving) {
-            hx += mx * 2.2f;
-            hy += my * 1.5f;
+            hx += mx * (running ? 2.2f : 1.1f);
+            hy += my * (running ? 1.5f : 0.75f);
             if (mx < -0.1f) face_left = 1;
             if (mx >  0.1f) face_left = 0;
             ph += 0.17f;
@@ -277,9 +286,15 @@ int main(void) {
             if (act == 1 && u > 0.3f && u < 0.6f) hx += (face_left ? -2.2f : 2.2f);   // pequeno avanco no golpe
             if (++act_t >= dur) act = 0;
         } else {
-            Pose idle = mplay_pose(&idle_p, 1.0f / 60.0f);
-            Pose walk = mplay_pose(&walk_p, moving ? 1.0f / 60.0f : 0.0f);
-            cur = lerp_pose(&idle, &walk, blend);
+            float li, lw, lr;
+            Pose idle = mplay_pose(&idle_p, 1.0f / 60.0f, &li);
+            Pose walk = mplay_pose(&walk_p, (moving && !running) ? 1.0f / 60.0f : 0.0f, &lw);
+            Pose run  = mplay_pose(&run_p, running ? 1.0f / 60.0f : 0.0f, &lr);
+            runb += ((running ? 1.0f : 0.0f) - runb) * 0.25f;
+            Pose mv = lerp_pose(&walk, &run, runb);
+            float lmv = lw + (lr - lw) * runb;
+            cur = lerp_pose(&idle, &mv, blend);
+            g_lift = li + (lmv - li) * blend;
             cur = lerp_pose(&cur, &P_GUARD, guard);
         }
         if (hx < 45) hx = 45;
@@ -294,6 +309,7 @@ int main(void) {
             draw_rect_sprite(grass, i * 285.0f, 182, (i + 1) * 285.0f, 480, white);
         draw_rect_sprite(shadow, hx - 50, hy - 25, hx + 50, hy + 25, shadow_c);
         draw_rect_sprite(ring, hx - 50, hy - 20, hx + 50, hy + 20, ring_c);
+        g_use_fixed = (act == 0 && guard < 0.05f);
         draw_hero(hx, hy, &cur, face_left);
         // barra de vida
         gsKit_prim_sprite(gs, (hx - 27) * K, (hy - 195) * K + YOFF, (hx + 27) * K, (hy - 190) * K + YOFF,
